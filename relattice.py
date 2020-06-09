@@ -24,19 +24,33 @@ def get_opposite_point(dtri, bad_triangles, triangle_index, point_index):
         # This shouldn't happen
         raise ValueError("Point not in triangle")
     
-    opp_triangle_index = dtri.neighbors[triangle_index][triangle==point_index]
+    opp_triangle_index = dtri.neighbors[triangle_index][triangle == point_index]
     if opp_triangle_index == -1:
         return "Reached boundary", None
     if bad_triangles is not None and opp_triangle_index in bad_triangles:
         return "Reached bad triangle", None
     opp_triangle = dtri.simplices[opp_triangle_index]
-    opp_point_index = opp_triangle[dtri.neighbors[opp_triangle_index]==triangle_index]
+    opp_point_index = opp_triangle[dtri.neighbors[opp_triangle_index] == triangle_index]
     
     return opp_point_index[0], opp_triangle_index[0]
 
-def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_steps=None,
-              stop_on_collision=True):
+def relattice(dtri, first_triangle_index, bad_triangles=None, max_steps=None,
+              stop_on_collision=0, verbose=0):
+    """
+    Args:
+        dtri: A sciply.spatial.Dealaunay triangulation
+        first_triangle_index: the index of the first triangle in dtri.simplices from which to
+            build the graph
+        bad_triangles: indices (or bool array) of triangles to ignore when building graph.
+        max_steps: int. How many steps to take before returning results. for debugging.
+        stop_on_collision: int. How many collisions to allow before stopping a returning partial result.
+            If zero, allows any number of collisions.
+    """
+    if bad_triangles.dtype == 'bool':
+        bad_triangles = np.where(bad_triangles)[0]
     ij = np.full((len(dtri.points), 2), np.nan)
+    # solved_by_triangle is a dict keeping track of which triangle was used to infer the location of each point.
+    # It is of the form {opp_point_index: (triangle_index, point_index, opp_ij)}
     solved_by_triangle = collections.defaultdict(list)
     ij[dtri.simplices[first_triangle_index]] = [[0, 0], [0, 1], [1, 0]]
     
@@ -64,17 +78,22 @@ def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_ste
                                                                  triangle_index,
                                                                  point_index)
         
-        # triangle, but rolled to put point_index in the first entry
+        # same as triangle, but rolled to put point_index in the first entry
         rolled_triangle = np.roll(triangle, -np.argmax(triangle  ==  point_index)) 
         opp_ij = [-1,1,1] @ ij[rolled_triangle]  # this is equivalent to row2 + row1 - row0
-        if opp_triangle_index is None:  # reached boundary/bad triangle
+
+        # Now we found what the ij of the opposite vertex is. There are 4 possible cases:
+        # reached boundary/bad triangle
+        if opp_triangle_index is None:  
             if verbose >= 1:
                 print(opp_point_index)
             continue
+        # This vertex is already assigned an ij, but it's the same so all is good.
         if all(ij[opp_point_index] == opp_ij):
             if verbose >= 2 :
                 print(f'closed a loop at {opp_ij}')
             continue
+        # Collision: vertex is already assigned a different ij.
         if not all(np.isnan(ij[opp_point_index])):
             collisions += 1
             print(f"COLLISION AT point #{opp_point_index}. "
@@ -86,8 +105,9 @@ def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_ste
             if stop_on_collision and collisions >= stop_on_collision:
                 break
 
+        # Else, it's a new ij so we add it and also add new steps from the new triangle.
         if verbose >= 1:
-            print(f'Solved! point #{opp_point_index} is {opp_ij.astype("i").tolist()}')
+            print(f'Solved! point #{opp_point_index} is at {opp_ij.astype("i").tolist()}')
         ij[opp_point_index] = opp_ij
         solved_by_triangle[opp_point_index].append((triangle_index, point_index, opp_ij))
         
@@ -130,7 +150,7 @@ def loadmat(filename):
 
 def _todict(matobj):
     '''
-    A recursive function which constructs from matobjects nested dictionaries
+    A recursive function which constructs nested dictionaries from mat objects
     '''
     dict = {}
     for strg in matobj._fieldnames:
