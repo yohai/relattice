@@ -3,6 +3,8 @@ import numpy as np
 from scipy.spatial import Delaunay
 from matplotlib import pyplot as plt
 import matplotlib
+import collections
+from scipy import io as spio
 
 def get_opposite_point(dtri, bad_triangles, triangle_index, point_index):
     """Calculates the point opposite to a given point in a delaunay triangulation.
@@ -32,8 +34,10 @@ def get_opposite_point(dtri, bad_triangles, triangle_index, point_index):
     
     return opp_point_index[0], opp_triangle_index[0]
 
-def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_steps=None):
+def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_steps=None,
+              stop_on_collision=True):
     ij = np.full((len(dtri.points), 2), np.nan)
+    solved_by_triangle = collections.defaultdict(list)
     ij[dtri.simplices[first_triangle_index]] = [[0, 0], [0, 1], [1, 0]]
     
     # A "step" is a tuple of the form (triangle_index, point_index) where the indices 
@@ -41,7 +45,8 @@ def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_ste
     steps_to_take = {(first_triangle_index, pi) 
                      for pi in dtri.simplices[first_triangle_index]}
     steps_done = set()
-    
+    collisions = 0
+
     n_steps=0
     if max_steps is None:
         max_steps = len(dtri.points) * 3
@@ -71,14 +76,20 @@ def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_ste
                 print(f'closed a loop at {opp_ij}')
             continue
         if not all(np.isnan(ij[opp_point_index])):
+            collisions += 1
             print(f"COLLISION AT point #{opp_point_index}. "
                   f"Triangle #{triangle_index} gives {opp_ij}. "
-                  f"Already assigned {ij[opp_point_index].astype('i').tolist()}.")
-            return ij
+                  # f"Already assigned {ij[opp_point_index].astype('i').tolist()}  "
+                  # f"by triangle #{solved_by_triangle[opp_point_index]}"
+                  )
+            solved_by_triangle[opp_point_index].append((triangle_index, point_index, opp_ij))
+            if stop_on_collision and collisions >= stop_on_collision:
+                break
 
         if verbose >= 1:
             print(f'Solved! point #{opp_point_index} is {opp_ij.astype("i").tolist()}')
         ij[opp_point_index] = opp_ij
+        solved_by_triangle[opp_point_index].append((triangle_index, point_index, opp_ij))
         
         # add also opposite step to done, as it's redundant.
         steps_done.add((opp_triangle_index, opp_point_index))
@@ -93,5 +104,47 @@ def relattice(dtri, first_triangle_index, bad_triangles=None, verbose=0, max_ste
 
     if not np.isnan(ij).any():
         ij = ij.astype('i')
-    return ij
+    return ij, collisions, solved_by_triangle
+
+def loadmat(filename):
+    """
+    this function should be called instead of direct spio.loadmat
+    as it cures the problem of not properly recovering python dictionaries
+    from mat files. It calls the function check keys to cure all entries
+    which are still mat-objects
+
+    source: https://stackoverflow.com/questions/7008608/
+    """
+    def _check_keys(dict):
+        '''
+        checks if entries in dictionary are mat-objects. If yes
+        todict is called to change them to nested dictionaries
+        '''
+        for key in dict:
+            if isinstance(dict[key], spio.matlab.mio5_params.mat_struct):
+                dict[key] = _todict(dict[key])
+        return dict
+
+    data = spio.loadmat(filename, struct_as_record=False, squeeze_me=True)
+    return _check_keys(data)
+
+def _todict(matobj):
+    '''
+    A recursive function which constructs from matobjects nested dictionaries
+    '''
+    dict = {}
+    for strg in matobj._fieldnames:
+        elem = matobj.__dict__[strg]
+        if isinstance(elem, spio.matlab.mio5_params.mat_struct):
+            dict[strg] = _todict(elem)
+        elif (isinstance(elem, np.ndarray) and 
+              elem.dtype=='O' and 
+              all(isinstance(e, spio.matlab.mio5_params.mat_struct) for e in elem)):
+            dict[strg] = [_todict(e) for e in elem]
+        else:
+            dict[strg] = elem
+    return dict
+
+# d = loadmat('yoav_data.mat')
+# pickle.dump(d, open('yoav_data.pkl','wb'))
            
