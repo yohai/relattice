@@ -133,7 +133,7 @@ def loadmat(filename):
     from mat files. It calls the function check keys to cure all entries
     which are still mat-objects
 
-    source: https://stackoverflow.com/questions/7008608/
+    Inspired by https://stackoverflow.com/questions/7008608/
     """
     def _check_keys(dict):
         '''
@@ -151,6 +151,7 @@ def loadmat(filename):
 def _todict(matobj):
     '''
     A recursive function which constructs nested dictionaries from mat objects
+    Inspired by https://stackoverflow.com/questions/7008608/
     '''
     dict = {}
     for strg in matobj._fieldnames:
